@@ -1,16 +1,29 @@
 <!DOCTYPE html>
-<html>
-
+<html lang="en">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width">
-  <title>replit</title>
-  <link href="style.css" rel="stylesheet" type="text/css" />
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ask the World</title>
+    <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css"> {/* ADD THIS LINE */}
 </head>
-
 <body>
-  Hello world
-  <script src="script.js"></script>
-</body>
+    <div class="app-container">
+        <div class="note">Built with love for curious minds ❤️</div>
 
+        <div id="toneSelector" class="tone-selector">
+            </div>
+
+        <button id="micButton" class="mic-button">TAP TO ASK</button>
+        <div id="loadingSpinner" class="loading-spinner"></div>
+        <div id="statusText" class="status-text"></div>
+        <div id="questionDisplay" class="question-display"></div>
+        <div id="answerDisplay" class="answer-display"></div>
+
+        <div id="audienceSelector" class="audience-selector">
+            </div>
+    </div>
+
+    <script src="script.js"></script> {/* ADD THIS LINE */}
+</body>
 </html>
