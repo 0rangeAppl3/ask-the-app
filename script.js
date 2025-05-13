@@ -1,264 +1,157 @@
-// --- CONFIGURATION ---
-//  !!!  IMPORTANT:  Do NOT hardcode your OpenAI API key here.  !!!
-//  It MUST be handled server-side for security.
-const PROXY_URL = '/api/openai-proxy/openai-tts'; //  Adjust if your server endpoint is different
-const CHAT_PROXY_URL = '/api/openai-proxy/ask';    //  Endpoint for chat completions
+// --- Server-Side (Express - to run on Vercel's Node.js environment) ---
+import express from 'express';
+import { OpenAI } from 'openai';
+import cors from 'cors';
+import dotenv from 'dotenv';
+import bodyParser from 'body-parser';
 
-// --- STATE ---
-const audienceLevels = ['For a 5-year-old', 'For a teenager', 'For an expert'];
-const audiencePromptMap = {
-    'For a 5-year-old': '5-year-old',
-    'For a teenager': 'teenager',
-    'For an expert': 'expert'
-};
-const tones = ['Playful', 'Serious', 'Sarcastic'];
+dotenv.config();
 
-let currentAudienceIndex = 1;
-let currentToneIndex = 0;
-
-let recognition;
-let isListening = false;
-
-// --- DOM ELEMENTS ---
-const micButton = document.getElementById('micButton');
-const statusText = document.getElementById('statusText');
-const questionDisplay = document.getElementById('questionDisplay');
-const answerDisplay = document.getElementById('answerDisplay');
-const loadingSpinner = document.getElementById('loadingSpinner');
-const audienceSelectorUI = document.getElementById('audienceSelector');
-const toneSelectorUI = document.getElementById('toneSelector');
-
-let currentAudio;  // To hold the currently playing audio
-
-// --- INITIALIZATION ---
-document.addEventListener('DOMContentLoaded', () => {
-    setupSpeechRecognition();
-    setupSwipeControls();
-    updateAudienceUI();
-    updateToneUI();
-
-    micButton.addEventListener('click', toggleListen);
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
 });
 
-function setupSpeechRecognition() {
-    window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!window.SpeechRecognition) {
-        statusText.textContent = "Speech recognition not supported in this browser.";
-        micButton.disabled = true;
-        return;
-    }
-    recognition = new SpeechRecognition();
-    recognition.interimResults = false;
-    recognition.lang = 'vi-VN';  //  Vietnamese
+const app = express();
+app.use(cors());
+app.use(bodyParser.json());
 
-    recognition.onstart = () => {
-        isListening = true;
-        micButton.textContent = 'LISTENING...';
-        statusText.textContent = 'Listening...';
-        questionDisplay.textContent = '';
-        answerDisplay.textContent = '';
-    };
-
-    recognition.onresult = (event) => {
-        const transcript = event.results[0][0].transcript;
-        questionDisplay.textContent = `"${transcript}"`;
-        statusText.textContent = 'Thinking...';
-        loadingSpinner.style.display = 'block';
-        fetchAnswer(transcript);
-    };
-
-    recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
-        statusText.textContent = `Error: ${event.error}. Try again?`;
-        if (event.error === 'no-speech') {
-            statusText.textContent = "Didn't hear anything. Try again!";
-        } else if (event.error === 'audio-capture') {
-            statusText.textContent = "Microphone error. Check permissions.";
-        } else if (event.error === 'not-allowed') {
-            statusText.textContent = "Permission denied for microphone.";
-        }
-        resetMicButton();
-    };
-
-    recognition.onend = () => {
-        if (isListening) {
-            resetMicButton();
-        }
-    };
-}
-
-function toggleListen() {
-    if (!recognition) return;
-    if (isListening) {
-        recognition.stop();
-        resetMicButton();
-    } else {
-        try {
-            recognition.start();
-        } catch (e) {
-            console.error("Error starting recognition:", e);
-            statusText.textContent = "Could not start listening. Try again.";
-            resetMicButton();
-        }
-    }
-}
-
-function resetMicButton() {
-    isListening = false;
-    micButton.textContent = 'TAP TO ASK';
-    loadingSpinner.style.display = 'none';
-}
-
-async function fetchAnswer(question) {
-    const currentTone = tones[currentToneIndex].toLowerCase();
-    const currentAudience = audiencePromptMap[audienceLevels[currentAudienceIndex]];
-
-    const systemPrompt = `You are answering this question in Vietnamese like a ${currentTone} ${currentAudience}. Keep the answer simple and fun. Your response should be just the answer, without any preamble like "Okay, here's the answer..." or any conversational fluff.`;
-
+app.post('/ask', async (req, res) => {
+    console.log("--- /ask route hit (within script.js) ---");
+    console.log("Request body:", req.body);
     try {
-        const response = await fetch(CHAT_PROXY_URL, {  // Use CHAT_PROXY_URL
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json'
-            },
-            body: JSON.stringify({
-                question: question,
-                tone: currentTone,
-                audiencePrompt: currentAudience,
-            })
+        const { question, tone, audiencePrompt } = req.body;
+        if (!question || !tone || !audiencePrompt) {
+            return res.status(400).json({ error: 'Missing required parameters' });
+        }
+
+        const systemPromptContent = `You are answering this question in Vietnamese like a ${tone} ${audiencePrompt}. Keep the answer simple and fun. Your response should be just the answer, without any preamble.`;
+
+        const chatCompletion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini', // Or your preferred chat model
+            messages: [
+                { role: 'system', content: systemPromptContent },
+                { role: 'user', content: question }
+            ],
+            temperature: 0.7,
+            max_tokens: 200
         });
 
-        if (!response.ok) {
-            const errorData = await response.json();
-            console.error('OpenAI API Error:', errorData);
-            throw new Error(`API Error: ${response.status} ${errorData.error?.message || response.statusText}`);
-        }
-
-        const data = await response.json();
-        let answer = data.answer;
-
+        const answer = chatCompletion.choices[0]?.message?.content.trim();
         if (!answer) {
-            throw new Error("No answer received from AI.");
+            return res.status(500).json({ error: "No answer from OpenAI" });
         }
 
-        answerDisplay.textContent = answer;
-        speakAnswer(answer);
+        res.json({ answer });
 
     } catch (error) {
-        console.error('Error fetching answer:', error);
-        answerDisplay.textContent = `Oops! Something went wrong. ${error.message}`;
-        speakAnswer(`Oops! Something went wrong. ${error.message.split(':')[0]}`);
-    } finally {
-        resetMicButton();
-        statusText.textContent = 'Tap to ask another question!';
+        console.error("Error in /ask (within script.js):", error);
+        if (error instanceof OpenAI.APIError) {
+            res.status(500).json({ error: `OpenAI API Error: ${error.message}` });
+        } else {
+            res.status(500).json({ error: "Error processing your request" });
+        }
     }
-}
+});
 
-async function speakAnswer(text) {
-    if (!text) return;
+app.post('/openai-tts', async (req, res) => {
+    console.log("--- /openai-tts route hit (within script.js) ---");
+    console.log("Request body:", req.body);
+    try {
+        const { text } = req.body;
+        if (!text) {
+            return res.status(400).json({ error: 'Missing text for TTS' });
+        }
+
+        const mp3 = await openai.audio.speech.create({
+            model: "tts-1",
+            voice: "nova",
+            input: text,
+        });
+
+        const buffer = Buffer.from(await mp3.arrayBuffer());
+
+        res.setHeader('Content-Type', 'audio/mpeg');
+        res.send(buffer);
+
+    } catch (error) {
+        console.error("Error in /openai-tts (within script.js):", error);
+        if (error instanceof OpenAI.APIError) {
+            res.status(500).json({ error: `OpenAI TTS Error: ${error.message}` });
+        } else {
+            res.status(500).json({ error: "Error generating speech" });
+        }
+    }
+});
+
+// --- Client-Side JavaScript ---
+async function fetchAnswer() {
+    const questionInput = document.getElementById('question');
+    const toneSelect = document.getElementById('tone');
+    const audienceSelect = document.getElementById('audience');
+    const answerDiv = document.getElementById('answer');
+    const speakButton = document.getElementById('speak-button');
+    const question = questionInput.value.trim();
+    const tone = toneSelect.value;
+    const audiencePrompt = audienceSelect.value;
+
+    if (!question) {
+        alert('Please enter your question.');
+        return;
+    }
+
+    answerDiv.textContent = 'Loading...';
+    speakButton.disabled = true;
 
     try {
-        const response = await fetch(PROXY_URL, {  // Use PROXY_URL for TTS
+        const response = await fetch('/ask', { // Now calling the server on the same origin
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
             },
-            body: JSON.stringify({ text: text }),
+            body: JSON.stringify({ question, tone, audiencePrompt }),
         });
 
         if (!response.ok) {
             const errorData = await response.json();
-            console.error("OpenAI TTS Error:", errorData);
-            // Fallback to browser TTS (less ideal, but for robustness)
-            const utterance = new SpeechSynthesisUtterance(text);
-            speechSynthesis.speak(utterance);
+            console.error('Error from /ask:', errorData);
+            answerDiv.textContent = `Error: ${errorData.error || 'Something went wrong'}`;
             return;
         }
 
-        const audioBlob = await response.blob();
-        const audioUrl = URL.createObjectURL(audioBlob);
-        if (currentAudio) {
-            currentAudio.pause();
-            currentAudio.currentTime = 0;
-            currentAudio.src = ''; //  Release previous audio
-            currentAudio.remove();
-        }
-        currentAudio = new Audio(audioUrl);
-        currentAudio.play();
-
-        currentAudio.addEventListener('ended', () => {
-            URL.revokeObjectURL(audioUrl); // Clean up
-        });
-        currentAudio.addEventListener('error', (error) => {
-            console.error("Error playing audio:", error);
-            URL.revokeObjectURL(audioUrl);
-        });
+        const data = await response.json();
+        const answer = data.answer;
+        answerDiv.textContent = answer;
+        speakButton.disabled = false;
 
     } catch (error) {
-        console.error("Error sending TTS request:", error);
-        // Fallback to browser TTS
-        const utterance = new SpeechSynthesisUtterance(text);
-        speechSynthesis.speak(utterance);
+        console.error('Fetch error:', error);
+        answerDiv.textContent = 'Failed to fetch answer.';
     }
 }
 
-// --- SWIPE CONTROLS ---
-let touchStartX = 0;
-let touchStartY = 0;
-let touchEndX = 0;
-let touchEndY = 0;
-const swipeThreshold = 50;
-
-function setupSwipeControls() {
-    document.body.addEventListener('touchstart', (e) => {
-        if (e.target === micButton || answerDisplay.contains(e.target)) return;
-        touchStartX = e.changedTouches[0].screenX;
-        touchStartY = e.changedTouches[0].screenY;
-    }, { passive: true });
-
-    document.body.addEventListener('touchend', (e) => {
-        if (e.target === micButton || answerDisplay.contains(e.target)) return;
-        touchEndX = e.changedTouches[0].screenX;
-        touchEndY = e.changedTouches[0].screenY;
-        handleSwipe();
-    }, { passive: true });
-}
-
-function handleSwipe() {
-    const deltaX = touchEndX - touchStartX;
-    const deltaY = touchEndY - touchStartY;
-
-    if (Math.abs(deltaX) > Math.abs(deltaY)) {
-        if (Math.abs(deltaX) > swipeThreshold) {
-            if (deltaX > 0) {
-                currentAudienceIndex = (currentAudienceIndex + 1) % audienceLevels.length;
-            } else {
-                currentAudienceIndex = (currentAudienceIndex - 1 + audienceLevels.length) % audienceLevels.length;
-            }
-            updateAudienceUI();
-        }
-    } else {
-        if (Math.abs(deltaY) > swipeThreshold) {
-            if (deltaY < 0) {
-                currentToneIndex = (currentToneIndex + 1) % tones.length;
-            } else {
-                currentToneIndex = (currentToneIndex - 1 + tones.length) % tones.length;
-            }
-            updateToneUI();
-        }
+function speakAnswer(text) {
+    if (!window.speechSynthesis) {
+        alert('Text-to-speech not supported in this browser.');
+        return;
     }
-    touchStartX = 0; touchStartY = 0; touchEndX = 0; touchEndY = 0;
+
+    const utterance = new SpeechSynthesisUtterance(text);
+    const voices = window.speechSynthesis.getVoices();
+
+    // Try to find a Vietnamese voice
+    let vietnameseVoice = voices.find(voice => voice.lang.startsWith('vi'));
+    if (vietnameseVoice) {
+        utterance.voice = vietnameseVoice;
+    } else if (voices.length > 0) {
+        utterance.voice = voices[0]; // Fallback to the first available voice
+    }
+
+    // Optional settings
+    // utterance.rate = 0.9;
+    // utterance.pitch = 1;
+
+    speechSynthesis.speak(utterance);
 }
 
-// --- UI UPDATES ---
-function updateAudienceUI() {
-    audienceSelectorUI.innerHTML = audienceLevels.map((level, index) =>
-        `<span class="option ${index === currentAudienceIndex ? 'active' : ''}">${level.replace("For a ", "").replace("For an ", "")}</span>`
-    ).join(' | ');
-}
-
-function updateToneUI() {
-    toneSelectorUI.innerHTML = tones.map((tone, index) =>
-        `<span class="option ${index === currentToneIndex ? 'active' : ''}">${tone}</span>`
-    ).join(' | ');
-}
+// Export the Express app for Vercel
+export default app;
