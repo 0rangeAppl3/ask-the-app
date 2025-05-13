@@ -67,6 +67,7 @@ function setupSpeechRecognition() {
     recognition = new SpeechRecognition();
     recognition.interimResults = false;
     recognition.lang = 'en-US';
+    recognition.lang = 'vi-VN';
 
     recognition.onstart = () => {
         isListening = true;
@@ -186,75 +187,54 @@ async function fetchAnswer(question) {
 }
 
 function speakAnswer(text) {
-    console.log("[speakAnswer] Attempting to speak:", text);
-    if (!synthesis) {
-        console.error("[speakAnswer] SpeechSynthesis API not available.");
-        return;
-    }
-    if (!text || typeof text !== 'string' || text.trim() === "") {
-        console.warn("[speakAnswer] No valid text provided to speak.");
-        return;
-    }
+    if (!synthesis || !text) return;
+    synthesis.cancel();
 
-    // Cancel any currently speaking utterances before speaking a new one.
-    if (synthesis.speaking) {
-        console.log("[speakAnswer] Synthesis is currently speaking. Cancelling previous utterance.");
-        synthesis.cancel();
-    }
+    // Remove Emojis (more robust regex)
+    text = text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{1F004}-\u{1FAD6}]+/ug, '');
 
     const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US'; // Explicitly set language for the utterance
+    let selectedVoice = null;  // Initialize to null
 
-    // Use the globally populated availableVoices or try to get them again
-    let voicesToUse = availableVoices.length > 0 ? availableVoices : synthesis.getVoices();
-    console.log("[speakAnswer] Voices available at speak time:", voicesToUse.length);
+    const voices = synthesis.getVoices();
 
-    if (voicesToUse.length > 0) {
-        let selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en') && /Google US English/i.test(voice.name) && !/male/i.test(voice.name)); // Try specific Google Female
-        if (!selectedVoice) {
-            selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en') && /female|woman/i.test(voice.name) && voice.localService);
-        }
-        if (!selectedVoice) {
-            selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en') && voice.localService);
-        }
-        if (!selectedVoice) {
-            selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en')); // Fallback to any English voice
-        }
-
-        if (selectedVoice) {
-            utterance.voice = selectedVoice;
-            console.log("[speakAnswer] Using voice:", selectedVoice.name, `(${selectedVoice.lang})`);
-        } else {
-            console.warn("[speakAnswer] No suitable English voice found. Using browser default for lang 'en-US'.");
-        }
-    } else {
-        console.warn("[speakAnswer] No voices loaded. Relying on browser default for lang 'en-US'.");
+    // 1. Prioritize Vietnamese (more specific matching)
+    const vietnameseVoices = voices.filter(voice => voice.lang.startsWith('vi'));
+    if (vietnameseVoices.length > 0) {
+        //  Might want to add logic to pick a "best" Vietnamese voice 
+        //  (e.g., based on name or region if available)
+        selectedVoice = vietnameseVoices[0]; 
     }
 
-    utterance.onstart = () => {
-        console.log("[speakAnswer] Speech started for utterance:", utterance.text.substring(0, 30) + "...");
-    };
-    utterance.onend = () => {
-        console.log("[speakAnswer] Speech ended for utterance.");
-    };
-    utterance.onerror = (event) => {
-        console.error("[speakAnswer] SpeechSynthesisUtterance Error:", event.error, "for text:", utterance.text.substring(0,30) + "...");
-        console.error("Full event object:", event);
-        // Try to speak a generic error if TTS itself fails
-        if (event.error !== 'canceled' && event.error !== 'interrupted') { // Don't speak error if we cancelled it
-             statusText.textContent = `Speech error: ${event.error}`;
+    // 2.  If no Vietnamese, try English (more robust selection)
+    if (!selectedVoice) {
+        const englishVoices = voices.filter(voice => voice.lang.startsWith('en'));
+        if (englishVoices.length > 0) {
+            // Prioritize specific English voices (you can customize this)
+            let preferredVoice = englishVoices.find(voice => voice.name.includes('Google') && !voice.name.includes('Male'));
+            if (!preferredVoice) preferredVoice = englishVoices.find(voice => voice.localService); // Try local
+            if (!preferredVoice) preferredVoice = englishVoices[0];  // Fallback to the first English voice
+            selectedVoice = preferredVoice;
         }
-    };
-    
-    // Small delay before speaking, sometimes helps if cancel() was just called.
-    setTimeout(() => {
-        try {
-            console.log("[speakAnswer] Calling synthesis.speak().");
-            synthesis.speak(utterance);
-        } catch (e) {
-            console.error("[speakAnswer] Error caught during synthesis.speak():", e);
-        }
-    }, 50); // 50ms delay, adjust if needed or remove
+    }
+
+    if (selectedVoice) {
+        utterance.voice = selectedVoice;
+    } else {
+        console.warn("No suitable voice found. Using default.");
+    }
+
+    //  ---  Optional:  Subtle Rate/Pitch Variation  ---
+    //  These are very sensitive; small changes make a big difference.
+    if (tones[currentToneIndex] === 'Playful') {
+        utterance.rate = 1.05;  // Slight speed up
+        utterance.pitch = 1.05; // Slight increase
+    } else if (tones[currentToneIndex] === 'Sarcastic') {
+        utterance.rate = 0.95; // Slight slow down
+        utterance.pitch = 0.9;  // Slight decrease
+    }
+
+    synthesis.speak(utterance);
 }
 
 
