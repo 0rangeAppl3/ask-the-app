@@ -1,8 +1,8 @@
 // --- CONFIGURATION ---
 //  !!!  IMPORTANT:  Do NOT hardcode your OpenAI API key here.  !!!
 //  It MUST be handled server-side for security.
-const PROXY_URL = '/openai-tts'; //  Adjust if your server endpoint is different
-const CHAT_PROXY_URL = '/ask';    //  Endpoint for chat completions
+const PROXY_URL = '/api/openai-proxy/openai-tts'; //  Adjust if your server endpoint is different
+const CHAT_PROXY_URL = '/api/openai-proxy/ask';    //  Endpoint for chat completions
 
 // --- STATE ---
 const audienceLevels = ['For a 5-year-old', 'For a teenager', 'For an expert'];
