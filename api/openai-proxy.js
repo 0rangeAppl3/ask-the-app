@@ -4,6 +4,13 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
+const app = express();
+app.get('/test', (req, res) => {
+  console.log("Test route hit!");  //  Will this log?
+  res.status(200).send("Hello from Vercel!");
+});
+export default app;  //  For Express
+
 dotenv.config();
 
 const openai = new OpenAI({
