@@ -1,67 +1,56 @@
-// api/openai-proxy.js
-export default async function handler(request, response) {
-  if (request.method !== 'POST') {
-    return response.status(405).json({ message: 'Only POST requests allowed' });
-  }
+import OpenAI from 'openai';
+import express from 'express';
+import bodyParser from 'body-parser';
+import cors from 'cors';
+import dotenv from 'dotenv';
 
-  let body;
-  if (typeof request.body === 'string') {
+dotenv.config();
+
+const openai = new OpenAI({
+    apiKey: process.env.OPENAI_API_KEY,
+});
+
+const app = express();
+const port = 3000;
+
+app.use(cors());
+app.use(bodyParser.json());
+
+// Existing /ask endpoint (keep this)
+app.post('/ask', async (req, res) => {
+    // ... your existing /ask logic ...
+});
+
+// New /openai-tts endpoint
+app.post('/openai-tts', async (req, res) => {
     try {
-      body = JSON.parse(request.body);
-    } catch (e) {
-      return response.status(400).json({ error: 'Invalid JSON in request body' });
+        const { text } = req.body;
+        if (!text) {
+            return res.status(400).json({ error: 'Missing text in request body' });
+        }
+
+        const mp3 = await openai.audio.speech.create({
+            model: "tts-1",
+            voice: "nova", // You can change the voice (alloy, echo, fable, onyx, nova, shimmer)
+            input: text,
+        });
+
+        // The response is a ReadableStream of the audio data
+        const buffer = await mp3.arrayBuffer();
+        const audioBuffer = Buffer.from(buffer);
+
+        res.writeHead(200, {
+            'Content-Type': 'audio/mpeg',
+            'Content-Length': audioBuffer.length
+        });
+        res.end(audioBuffer);
+
+    } catch (error) {
+        console.error("OpenAI TTS API Error:", error);
+        res.status(500).json({ error: 'Failed to generate speech from OpenAI' });
     }
-  } else {
-    body = request.body;
-  }
+});
 
-  const { question, tone, audiencePrompt } = body;
-  const apiKey = process.env.OPENAI_API_KEY;
-
-  if (!apiKey) {
-    console.error('API key not configured on Vercel for openai-proxy.');
-    return response.status(500).json({ error: 'API key not configured server-side.' });
-  }
-  if (!question || !tone || !audiencePrompt) {
-    return response.status(400).json({ error: 'Missing required parameters: question, tone, audiencePrompt' });
-  }
-
-  const systemPromptContent = `You are answering this question in Vietnamese like a ${tone} ${audiencePrompt}. Keep the answer simple and fun. Your response should be just the answer, without any preamble like "Okay, here's the answer..." or any conversational fluff.`;
-
-  try {
-    const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini', // <<<< MODEL CHANGED HERE
-        messages: [
-          { role: 'system', content: systemPromptContent },
-          { role: 'user', content: question }
-        ],
-        temperature: 0.7,
-        max_tokens: 200 // Increased slightly for potentially more detailed mini model
-      })
-    });
-
-    if (!openaiResponse.ok) {
-      const errorData = await openaiResponse.json();
-      console.error('OpenAI API Error (from proxy):', errorData);
-      return response.status(openaiResponse.status).json({ error: `OpenAI API Error: ${errorData.error?.message || openaiResponse.statusText}` });
-    }
-
-    const data = await openaiResponse.json();
-    const answer = data.choices[0]?.message?.content.trim();
-    
-    if (!answer) {
-        return response.status(500).json({error: "No answer received from AI in proxy."})
-    }
-    return response.status(200).json({ answer });
-
-  } catch (error) {
-    console.error('Error in proxy function (openai-proxy.js):', error);
-    return response.status(500).json({ error: `Internal Server Error in proxy: ${error.message}` });
-  }
-}
+app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+});

@@ -186,55 +186,47 @@ async function fetchAnswer(question) {
     }
 }
 
-function speakAnswer(text) {
-    if (!synthesis || !text) return;
-    synthesis.cancel();
+async function speakAnswer(text) {
+    if (!text) return;
 
-    // Remove Emojis (more robust regex)
-    text = text.replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F900}-\u{1F9FF}\u{1FA70}-\u{1FAFF}\u{1F004}-\u{1FAD6}]+/ug, '');
+    try {
+        const response = await fetch('/openai-tts', { // Or the correct path to your proxy
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({ text: text }),
+        });
 
-    const utterance = new SpeechSynthesisUtterance(text);
-    let selectedVoice = null;  // Initialize to null
-
-    const voices = synthesis.getVoices();
-
-    // 1. Prioritize Vietnamese (more specific matching)
-    const vietnameseVoices = voices.filter(voice => voice.lang.startsWith('vi'));
-    if (vietnameseVoices.length > 0) {
-        //  Might want to add logic to pick a "best" Vietnamese voice 
-        //  (e.g., based on name or region if available)
-        selectedVoice = vietnameseVoices[0]; 
-    }
-
-    // 2.  If no Vietnamese, try English (more robust selection)
-    if (!selectedVoice) {
-        const englishVoices = voices.filter(voice => voice.lang.startsWith('en'));
-        if (englishVoices.length > 0) {
-            // Prioritize specific English voices (you can customize this)
-            let preferredVoice = englishVoices.find(voice => voice.name.includes('Google') && !voice.name.includes('Male'));
-            if (!preferredVoice) preferredVoice = englishVoices.find(voice => voice.localService); // Try local
-            if (!preferredVoice) preferredVoice = englishVoices[0];  // Fallback to the first English voice
-            selectedVoice = preferredVoice;
+        if (!response.ok) {
+            const errorData = await response.json();
+            console.error("OpenAI TTS Error:", errorData);
+            // Fallback to browser TTS if you want
+            const utterance = new SpeechSynthesisUtterance(text);
+            speechSynthesis.speak(utterance);
+            return;
         }
-    }
 
-    if (selectedVoice) {
-        utterance.voice = selectedVoice;
-    } else {
-        console.warn("No suitable voice found. Using default.");
-    }
+        const audioBlob = await response.blob();
+        const audioUrl = URL.createObjectURL(audioBlob);
+        const audio = new Audio(audioUrl);
+        audio.play();
 
-    //  ---  Optional:  Subtle Rate/Pitch Variation  ---
-    //  These are very sensitive; small changes make a big difference.
-    if (tones[currentToneIndex] === 'Playful') {
-        utterance.rate = 1.05;  // Slight speed up
-        utterance.pitch = 1.05; // Slight increase
-    } else if (tones[currentToneIndex] === 'Sarcastic') {
-        utterance.rate = 0.95; // Slight slow down
-        utterance.pitch = 0.9;  // Slight decrease
-    }
+        // Clean up the URL object to release resources
+        audio.addEventListener('ended', () => {
+            URL.revokeObjectURL(audioUrl);
+        });
+        audio.addEventListener('error', (error) => {
+            console.error("Error playing audio:", error);
+            URL.revokeObjectURL(audioUrl);
+        });
 
-    synthesis.speak(utterance);
+    } catch (error) {
+        console.error("Error sending TTS request:", error);
+        // Fallback to browser TTS if you want
+        const utterance = new SpeechSynthesisUtterance(text);
+        speechSynthesis.speak(utterance);
+    }
 }
 
 
