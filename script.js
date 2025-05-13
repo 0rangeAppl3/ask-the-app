@@ -1,4 +1,8 @@
-// script.js
+// --- CONFIGURATION ---
+//  !!!  IMPORTANT:  Do NOT hardcode your OpenAI API key here.  !!!
+//  It MUST be handled server-side for security.
+const PROXY_URL = '/openai-tts'; //  Adjust if your server endpoint is different
+const CHAT_PROXY_URL = '/ask';    //  Endpoint for chat completions
 
 // --- STATE ---
 const audienceLevels = ['For a 5-year-old', 'For a teenager', 'For an expert'];
@@ -9,13 +13,11 @@ const audiencePromptMap = {
 };
 const tones = ['Playful', 'Serious', 'Sarcastic'];
 
-let currentAudienceIndex = 1; // Default: Teenager
-let currentToneIndex = 0;     // Default: Playful
+let currentAudienceIndex = 1;
+let currentToneIndex = 0;
 
 let recognition;
-let synthesis = window.speechSynthesis;
 let isListening = false;
-let availableVoices = []; // Store loaded voices
 
 // --- DOM ELEMENTS ---
 const micButton = document.getElementById('micButton');
@@ -26,6 +28,8 @@ const loadingSpinner = document.getElementById('loadingSpinner');
 const audienceSelectorUI = document.getElementById('audienceSelector');
 const toneSelectorUI = document.getElementById('toneSelector');
 
+let currentAudio;  // To hold the currently playing audio
+
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
     setupSpeechRecognition();
@@ -34,28 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
     updateToneUI();
 
     micButton.addEventListener('click', toggleListen);
-
-    // Initialize voice list
-    if (synthesis.getVoices().length === 0) {
-        synthesis.onvoiceschanged = populateVoiceList;
-    } else {
-        populateVoiceList(); // Call directly if voices are already loaded
-    }
 });
-
-function populateVoiceList() {
-    availableVoices = synthesis.getVoices();
-    console.log("Voices loaded/changed. Total voices:", availableVoices.length);
-    if (availableVoices.length === 0 && synthesis.getVoices().length > 0) {
-        // Sometimes onvoiceschanged fires but getVoices() inside it is empty the first time
-        // Let's try to repopulate from the source if our array is empty but the API has them
-        console.log("Retrying to populate voices as availableVoices was empty but synthesis.getVoices() has some.");
-        availableVoices = synthesis.getVoices();
-        console.log("Re-populated voices count:", availableVoices.length);
-    }
-    // You could add logic here if you need to speak something that was queued
-    // For example, if an utterance was waiting for voices to load.
-}
 
 function setupSpeechRecognition() {
     window.SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -66,8 +49,7 @@ function setupSpeechRecognition() {
     }
     recognition = new SpeechRecognition();
     recognition.interimResults = false;
-    recognition.lang = 'en-US';
-    recognition.lang = 'vi-VN';
+    recognition.lang = 'vi-VN';  //  Vietnamese
 
     recognition.onstart = () => {
         isListening = true;
@@ -80,11 +62,13 @@ function setupSpeechRecognition() {
     recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
         questionDisplay.textContent = `"${transcript}"`;
-        fetchAnswer(transcript); // statusText and spinner handled in fetchAnswer
+        statusText.textContent = 'Thinking...';
+        loadingSpinner.style.display = 'block';
+        fetchAnswer(transcript);
     };
 
     recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error, event);
+        console.error('Speech recognition error:', event.error);
         statusText.textContent = `Error: ${event.error}. Try again?`;
         if (event.error === 'no-speech') {
             statusText.textContent = "Didn't hear anything. Try again!";
@@ -97,25 +81,17 @@ function setupSpeechRecognition() {
     };
 
     recognition.onend = () => {
-        // Only reset if it wasn't due to a result being processed which calls fetchAnswer
-        if (isListening && micButton.textContent === 'LISTENING...') {
-             resetMicButton();
+        if (isListening) {
+            resetMicButton();
         }
     };
 }
 
 function toggleListen() {
     if (!recognition) return;
-
-    // Cancel any ongoing speech synthesis before starting new recognition
-    if (synthesis.speaking) {
-        console.log("Cancelling speech synthesis before new recognition starts.");
-        synthesis.cancel();
-    }
-
     if (isListening) {
         recognition.stop();
-        resetMicButton(); // Should ideally be handled by onend or onerror
+        resetMicButton();
     } else {
         try {
             recognition.start();
@@ -131,58 +107,50 @@ function resetMicButton() {
     isListening = false;
     micButton.textContent = 'TAP TO ASK';
     loadingSpinner.style.display = 'none';
-    // Optionally clear status text or set to default if not an error
-    if (!statusText.textContent.toLowerCase().includes('error')) {
-        statusText.textContent = 'Tap the mic to ask a question.';
-    }
 }
 
 async function fetchAnswer(question) {
-    loadingSpinner.style.display = 'block';
-    statusText.textContent = 'Thinking...';
-    micButton.disabled = true; // Disable button while processing
-
     const currentTone = tones[currentToneIndex].toLowerCase();
-    const currentAudienceForPrompt = audiencePromptMap[audienceLevels[currentAudienceIndex]];
+    const currentAudience = audiencePromptMap[audienceLevels[currentAudienceIndex]];
+
+    const systemPrompt = `You are answering this question in Vietnamese like a ${currentTone} ${currentAudience}. Keep the answer simple and fun. Your response should be just the answer, without any preamble like "Okay, here's the answer..." or any conversational fluff.`;
 
     try {
-        const response = await fetch('/api/openai-proxy', {
+        const response = await fetch(CHAT_PROXY_URL, {  // Use CHAT_PROXY_URL
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 question: question,
                 tone: currentTone,
-                audiencePrompt: currentAudienceForPrompt
+                audiencePrompt: currentAudience,
             })
         });
 
         if (!response.ok) {
             const errorData = await response.json();
-            console.error('API Proxy Error:', response.status, errorData);
-            throw new Error(`Failed to get answer: ${errorData.error || response.statusText}`);
+            console.error('OpenAI API Error:', errorData);
+            throw new Error(`API Error: ${response.status} ${errorData.error?.message || response.statusText}`);
         }
 
         const data = await response.json();
         let answer = data.answer;
 
         if (!answer) {
-            throw new Error("No answer received from proxy.");
+            throw new Error("No answer received from AI.");
         }
 
         answerDisplay.textContent = answer;
-        speakAnswer(answer); // Call speakAnswer with the received answer
+        speakAnswer(answer);
 
     } catch (error) {
-        console.error('Error fetching answer via proxy:', error);
+        console.error('Error fetching answer:', error);
         answerDisplay.textContent = `Oops! Something went wrong. ${error.message}`;
-        // Optionally speak the error too, or a generic error message
-        speakAnswer(`Sorry, I encountered an error: ${error.message.split(':')[0]}.`);
+        speakAnswer(`Oops! Something went wrong. ${error.message.split(':')[0]}`);
     } finally {
-        micButton.disabled = false; // Re-enable button
-        resetMicButton(); // Resets text, spinner
-        statusText.textContent = 'Tap to ask another question!'; // Set appropriate status
+        resetMicButton();
+        statusText.textContent = 'Tap to ask another question!';
     }
 }
 
@@ -190,7 +158,7 @@ async function speakAnswer(text) {
     if (!text) return;
 
     try {
-        const response = await fetch('/openai-tts', { // Or the correct path to your proxy
+        const response = await fetch(PROXY_URL, {  // Use PROXY_URL for TTS
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -201,7 +169,7 @@ async function speakAnswer(text) {
         if (!response.ok) {
             const errorData = await response.json();
             console.error("OpenAI TTS Error:", errorData);
-            // Fallback to browser TTS if you want
+            // Fallback to browser TTS (less ideal, but for robustness)
             const utterance = new SpeechSynthesisUtterance(text);
             speechSynthesis.speak(utterance);
             return;
@@ -209,31 +177,32 @@ async function speakAnswer(text) {
 
         const audioBlob = await response.blob();
         const audioUrl = URL.createObjectURL(audioBlob);
-        const audio = new Audio(audioUrl);
-        audio.play();
+        if (currentAudio) {
+            currentAudio.pause();
+            currentAudio.currentTime = 0;
+            currentAudio.src = ''; //  Release previous audio
+            currentAudio.remove();
+        }
+        currentAudio = new Audio(audioUrl);
+        currentAudio.play();
 
-        // Clean up the URL object to release resources
-        audio.addEventListener('ended', () => {
-            URL.revokeObjectURL(audioUrl);
+        currentAudio.addEventListener('ended', () => {
+            URL.revokeObjectURL(audioUrl); // Clean up
         });
-        audio.addEventListener('error', (error) => {
+        currentAudio.addEventListener('error', (error) => {
             console.error("Error playing audio:", error);
             URL.revokeObjectURL(audioUrl);
         });
 
     } catch (error) {
         console.error("Error sending TTS request:", error);
-        // Fallback to browser TTS if you want
+        // Fallback to browser TTS
         const utterance = new SpeechSynthesisUtterance(text);
         speechSynthesis.speak(utterance);
     }
 }
 
-
 // --- SWIPE CONTROLS ---
-// (Keep your existing setupSwipeControls, handleSwipe, updateAudienceUI, updateToneUI functions here)
-// Make sure they are unchanged unless specifically mentioned. For brevity, not re-pasting them.
-// For example:
 let touchStartX = 0;
 let touchStartY = 0;
 let touchEndX = 0;
@@ -242,13 +211,13 @@ const swipeThreshold = 50;
 
 function setupSwipeControls() {
     document.body.addEventListener('touchstart', (e) => {
-        if (e.target === micButton || answerDisplay.contains(e.target) || e.target.closest('.mic-button') || e.target.closest('.answer-display') ) return;
+        if (e.target === micButton || answerDisplay.contains(e.target)) return;
         touchStartX = e.changedTouches[0].screenX;
         touchStartY = e.changedTouches[0].screenY;
     }, { passive: true });
 
     document.body.addEventListener('touchend', (e) => {
-        if (e.target === micButton || answerDisplay.contains(e.target) || e.target.closest('.mic-button') || e.target.closest('.answer-display')) return;
+        if (e.target === micButton || answerDisplay.contains(e.target)) return;
         touchEndX = e.changedTouches[0].screenX;
         touchEndY = e.changedTouches[0].screenY;
         handleSwipe();
@@ -281,6 +250,7 @@ function handleSwipe() {
     touchStartX = 0; touchStartY = 0; touchEndX = 0; touchEndY = 0;
 }
 
+// --- UI UPDATES ---
 function updateAudienceUI() {
     audienceSelectorUI.innerHTML = audienceLevels.map((level, index) =>
         `<span class="option ${index === currentAudienceIndex ? 'active' : ''}">${level.replace("For a ", "").replace("For an ", "")}</span>`

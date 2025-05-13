@@ -11,17 +11,45 @@ const openai = new OpenAI({
 });
 
 const app = express();
-const port = 3000;
+const port = 3000;  // Or your preferred port
 
 app.use(cors());
 app.use(bodyParser.json());
 
-// Existing /ask endpoint (keep this)
+//  ---  OpenAI Chat Completion  ---
 app.post('/ask', async (req, res) => {
-    // ... your existing /ask logic ...
+    try {
+        const { question, tone, audiencePrompt } = req.body;
+        if (!question || !tone || !audiencePrompt) {
+            return res.status(400).json({ error: 'Missing required parameters' });
+        }
+
+        const systemPromptContent = `You are answering this question in Vietnamese like a ${tone} ${audiencePrompt}. Keep the answer simple and fun. Your response should be just the answer, without any preamble.`;
+
+        const chatCompletion = await openai.chat.completions.create({
+            model: 'gpt-4o-mini',  //  Or your preferred chat model
+            messages: [
+                { role: 'system', content: systemPromptContent },
+                { role: 'user', content: question }
+            ],
+            temperature: 0.7,
+            max_tokens: 200
+        });
+
+        const answer = chatCompletion.choices[0]?.message?.content.trim();
+        if (!answer) {
+            return res.status(500).json({ error: "No answer from OpenAI" });
+        }
+
+        res.json({ answer });
+
+    } catch (error) {
+        console.error("Chat Completion Error:", error);
+        res.status(500).json({ error: "Error processing your request" });
+    }
 });
 
-// New /openai-tts endpoint
+//  ---  OpenAI Text-to-Speech  ---
 app.post('/openai-tts', async (req, res) => {
     try {
         const { text } = req.body;
@@ -31,11 +59,10 @@ app.post('/openai-tts', async (req, res) => {
 
         const mp3 = await openai.audio.speech.create({
             model: "tts-1",
-            voice: "nova", // You can change the voice (alloy, echo, fable, onyx, nova, shimmer)
+            voice: "nova",  //  Or another voice (e.g., "alloy", "echo", "fable", "onyx", "shimmer")
             input: text,
         });
 
-        // The response is a ReadableStream of the audio data
         const buffer = await mp3.arrayBuffer();
         const audioBuffer = Buffer.from(buffer);
 
@@ -46,8 +73,8 @@ app.post('/openai-tts', async (req, res) => {
         res.end(audioBuffer);
 
     } catch (error) {
-        console.error("OpenAI TTS API Error:", error);
-        res.status(500).json({ error: 'Failed to generate speech from OpenAI' });
+        console.error("TTS API Error:", error);
+        res.status(500).json({ error: "Error generating speech" });
     }
 });
 
