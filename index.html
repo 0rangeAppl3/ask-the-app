@@ -1,29 +1,198 @@
+<!-- Built with love for curious minds ❤️ -->
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ask the World</title>
-    <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ask the App</title>
+  <link href="https://fonts.googleapis.com/css2?family=Comic+Neue:wght@700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/hammerjs@2.0.8/hammer.min.js"></script>
+  <style>
+    body {
+      font-family: 'Comic Neue', sans-serif;
+      background: linear-gradient(135deg, #ffecd2 0%, #fcb69f 100%);
+      margin: 0;
+      padding: 0;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+    }
+    #button {
+      width: 200px;
+      height: 200px;
+      border-radius: 50%;
+      background: linear-gradient(-45deg, #ee7752, #e73c7e, #23a6d5, #23d5ab);
+      background-size: 400% 400%;
+      animation: gradient 6s ease infinite;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 24px;
+      font-weight: bold;
+      color: white;
+      box-shadow: 0 0 30px rgba(0,0,0,0.2);
+      margin-bottom: 20px;
+      cursor: pointer;
+      text-align: center;
+    }
+    @keyframes gradient {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    #question, #answer {
+      margin: 5px;
+      padding: 0 20px;
+    }
+    #question {
+      font-size: 14px;
+      color: #444;
+    }
+    #answer {
+      font-size: 18px;
+      color: #222;
+    }
+    #level, #tone {
+      position: absolute;
+      font-size: 16px;
+      font-weight: bold;
+    }
+    #level {
+      bottom: 10px;
+      left: 0;
+      right: 0;
+    }
+    #tone {
+      top: 10px;
+      left: 0;
+      right: 0;
+    }
+  </style>
 </head>
 <body>
-    <div class="app-container">
-        <div class="note">Built with love for curious minds ❤️</div>
+  <div id="tone">Playful</div>
+  <div id="button">🎤 TAP TO ASK</div>
+  <div id="question"></div>
+  <div id="answer"></div>
+  <div id="level">5yo</div>
 
-        <div id="toneSelector" class="tone-selector">
-            </div>
-        
-        <button id="micButton" class="mic-button">TAP TO ASK</button>
-        <div id="loadingSpinner" class="loading-spinner"></div>
-        <div id="statusText" class="status-text"></div>
-        <div id="questionDisplay" class="question-display"></div>
-        <div id="answerDisplay" class="answer-display"></div>
+  <script>
+    const button = document.getElementById('button');
+    const questionEl = document.getElementById('question');
+    const answerEl = document.getElementById('answer');
+    const levelEl = document.getElementById('level');
+    const toneEl = document.getElementById('tone');
 
-        <div id="audienceSelector" class="audience-selector">
-            </div>
-    </div>
+    const levels = ['5yo', 'Teenager', 'Expert'];
+    const tones = ['Playful', 'Serious', 'Sarcastic'];
+    let levelIndex = 0;
+    let toneIndex = 0;
 
-    <script src="script.js"></script>
+    function updateLabels() {
+      levelEl.textContent = levels[levelIndex];
+      toneEl.textContent = tones[toneIndex];
+    }
+
+    const mc = new Hammer(document.body);
+    mc.get('swipe').set({ direction: Hammer.DIRECTION_ALL, threshold: 5 });
+
+    mc.on("swipeleft", () => {
+      levelIndex = (levelIndex + 1) % levels.length;
+      updateLabels();
+    });
+    mc.on("swiperight", () => {
+      levelIndex = (levelIndex - 1 + levels.length) % levels.length;
+      updateLabels();
+    });
+    mc.on("swipeup", () => {
+      toneIndex = (toneIndex + 1) % tones.length;
+      updateLabels();
+    });
+    mc.on("swipedown", () => {
+      toneIndex = (toneIndex - 1 + tones.length) % tones.length;
+      updateLabels();
+    });
+
+    async function getAnswer(question) {
+      const systemPrompt = `You are answering this question like a ${tones[toneIndex]} ${levels[levelIndex]}. Keep the answer simple and fun.`;
+      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer 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"
+        },
+        body: JSON.stringify({
+          model: "gpt-4o",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: question }
+          ]
+        })
+      });
+      const data = await res.json();
+      return data.choices[0].message.content;
+    }
+
+    async function speak(text) {
+      const response = await fetch("https://api.openai.com/v1/audio/speech", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": "Bearer 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"
+        },
+        body: JSON.stringify({
+          model: "tts-1",
+          voice: "nova",
+          input: text
+        })
+      });
+
+      const reader = response.body.getReader();
+      const stream = new ReadableStream({
+        start(controller) {
+          function push() {
+            reader.read().then(({ done, value }) => {
+              if (done) {
+                controller.close();
+                return;
+              }
+              controller.enqueue(value);
+              push();
+            });
+          }
+          push();
+        }
+      });
+
+      const audioBlob = await new Response(stream).blob();
+      const audioUrl = URL.createObjectURL(audioBlob);
+      const audio = new Audio(audioUrl);
+      audio.play();
+    }
+
+    button.addEventListener('click', () => {
+      button.textContent = '🎤 Listening...';
+      const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+      recognition.lang = 'vi-VN';
+      recognition.start();
+
+      recognition.onresult = async (event) => {
+        const transcript = event.results[0][0].transcript;
+        questionEl.textContent = transcript;
+        const answer = await getAnswer(transcript);
+        answerEl.textContent = answer;
+        button.textContent = '🎤 TAP TO ASK';
+        await speak(answer);
+      };
+
+      recognition.onerror = () => {
+        button.textContent = '🎤 TAP TO ASK';
+      };
+    });
+  </script>
 </body>
 </html>
