@@ -12,16 +12,31 @@
         <div class="note">Built with love for curious minds ❤️</div>
 
         <div id="toneSelector" class="tone-selector">
-            </div>
+            <label for="tone">Tone:</label>
+            <select id="tone">
+                <option value="helpful">Helpful</option>
+                <option value="funny">Funny</option>
+                <option value="sarcastic">Sarcastic</option>
+            </select>
+        </div>
 
-        <button id="micButton" class="mic-button">TAP TO ASK</button>
+        <button id="micButton" class="mic-button" onclick="fetchAnswer()">TAP TO ASK</button>
         <div id="loadingSpinner" class="loading-spinner"></div>
         <div id="statusText" class="status-text"></div>
         <div id="questionDisplay" class="question-display"></div>
-        <div id="answerDisplay" class="answer-display"></div>
+        <div id="answerDisplay" class="answer-display">
+            <p id="answer"></p>
+            <button id="speakButton" onclick="speakAnswer(document.getElementById('answer').textContent)" disabled>Speak Answer</button>
+        </div>
 
         <div id="audienceSelector" class="audience-selector">
-            </div>
+            <label for="audience">Audience:</label>
+            <select id="audience">
+                <option value="to a child">Child</option>
+                <option value="to a student">Student</option>
+                <option value="to an expert">Expert</option>
+            </select>
+        </div>
     </div>
 
     <script src="script.js"></script>
