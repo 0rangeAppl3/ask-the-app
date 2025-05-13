@@ -4,12 +4,7 @@ import bodyParser from 'body-parser';
 import cors from 'cors';
 import dotenv from 'dotenv';
 
-const app = express();
-app.get('/test', (req, res) => {
-  console.log("Test route hit!");  //  Will this log?
-  res.status(200).send("Hello from Vercel!");
-});
-export default app;  //  For Express
+
 
 dotenv.config();
 
@@ -25,15 +20,18 @@ app.use(bodyParser.json());
 
 //  ---  OpenAI Chat Completion  ---
 app.post('/ask', async (req, res) => {
+    console.log("--- /ask request ---");
+    console.log("Request body:", req.body);
     try {
         const { question, tone, audiencePrompt } = req.body;
         if (!question || !tone || !audiencePrompt) {
+            console.log("Error: Missing parameters");
             return res.status(400).json({ error: 'Missing required parameters' });
         }
 
         const systemPromptContent = `You are answering this question in Vietnamese like a ${tone} ${audiencePrompt}. Keep the answer simple and fun. Your response should be just the answer, without any preamble.`;
 
-        const chatCompletion = await openai.chat.completions.create({
+        const openaiParams = {
             model: 'gpt-4o-mini',  //  Or your preferred chat model
             messages: [
                 { role: 'system', content: systemPromptContent },
@@ -41,13 +39,19 @@ app.post('/ask', async (req, res) => {
             ],
             temperature: 0.7,
             max_tokens: 200
-        });
+        };
+        console.log("OpenAI Params:", openaiParams);
+
+        const chatCompletion = await openai.chat.completions.create(openaiParams);
+        console.log("OpenAI Response (raw):", chatCompletion);
 
         const answer = chatCompletion.choices[0]?.message?.content.trim();
         if (!answer) {
+            console.error("Error: No answer from OpenAI");
             return res.status(500).json({ error: "No answer from OpenAI" });
         }
 
+        console.log("Answer:", answer);
         res.json({ answer });
 
     } catch (error) {
