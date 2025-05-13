@@ -26,7 +26,7 @@ export default async function handler(request, response) {
     return response.status(400).json({ error: 'Missing required parameters: question, tone, audiencePrompt' });
   }
 
-  const systemPromptContent = `You are answering this question like a ${tone} ${audiencePrompt}. Keep the answer simple and fun. Your response should be just the answer, without any preamble like "Okay, here's the answer..." or any conversational fluff.`;
+  const systemPromptContent = `You are answering this question in Vietnamese like a ${tone} ${audiencePrompt}. Keep the answer simple and fun. Your response should be just the answer, without any preamble like "Okay, here's the answer..." or any conversational fluff.`;
 
   try {
     const openaiResponse = await fetch('https://api.openai.com/v1/chat/completions', {
