@@ -4,11 +4,23 @@ export default async function handler(request, response) {
     return response.status(405).json({ message: 'Only POST requests allowed' });
   }
 
-  const { question, tone, audiencePrompt } = request.body;
+  let body;
+  if (typeof request.body === 'string') {
+    try {
+      body = JSON.parse(request.body);
+    } catch (e) {
+      return response.status(400).json({ error: 'Invalid JSON in request body' });
+    }
+  } else {
+    body = request.body;
+  }
+
+  const { question, tone, audiencePrompt } = body;
   const apiKey = process.env.OPENAI_API_KEY;
 
   if (!apiKey) {
-    return response.status(500).json({ error: 'API key not configured' });
+    console.error('API key not configured on Vercel for openai-proxy.');
+    return response.status(500).json({ error: 'API key not configured server-side.' });
   }
   if (!question || !tone || !audiencePrompt) {
     return response.status(400).json({ error: 'Missing required parameters: question, tone, audiencePrompt' });
@@ -24,19 +36,19 @@ export default async function handler(request, response) {
         'Authorization': `Bearer ${apiKey}`
       },
       body: JSON.stringify({
-        model: 'gpt-3.5-turbo',
+        model: 'gpt-4o-mini', // <<<< MODEL CHANGED HERE
         messages: [
           { role: 'system', content: systemPromptContent },
           { role: 'user', content: question }
         ],
         temperature: 0.7,
-        max_tokens: 150
+        max_tokens: 200 // Increased slightly for potentially more detailed mini model
       })
     });
 
     if (!openaiResponse.ok) {
       const errorData = await openaiResponse.json();
-      console.error('OpenAI API Error:', errorData);
+      console.error('OpenAI API Error (from proxy):', errorData);
       return response.status(openaiResponse.status).json({ error: `OpenAI API Error: ${errorData.error?.message || openaiResponse.statusText}` });
     }
 
@@ -49,7 +61,7 @@ export default async function handler(request, response) {
     return response.status(200).json({ answer });
 
   } catch (error) {
-    console.error('Error in proxy function:', error);
-    return response.status(500).json({ error: `Internal Server Error: ${error.message}` });
+    console.error('Error in proxy function (openai-proxy.js):', error);
+    return response.status(500).json({ error: `Internal Server Error in proxy: ${error.message}` });
   }
 }

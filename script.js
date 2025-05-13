@@ -1,4 +1,4 @@
-// --- CONFIGURATION ---
+// script.js
 
 // --- STATE ---
 const audienceLevels = ['For a 5-year-old', 'For a teenager', 'For an expert'];
@@ -15,6 +15,7 @@ let currentToneIndex = 0;     // Default: Playful
 let recognition;
 let synthesis = window.speechSynthesis;
 let isListening = false;
+let availableVoices = []; // Store loaded voices
 
 // --- DOM ELEMENTS ---
 const micButton = document.getElementById('micButton');
@@ -27,7 +28,6 @@ const toneSelectorUI = document.getElementById('toneSelector');
 
 // --- INITIALIZATION ---
 document.addEventListener('DOMContentLoaded', () => {
-
     setupSpeechRecognition();
     setupSwipeControls();
     updateAudienceUI();
@@ -35,17 +35,26 @@ document.addEventListener('DOMContentLoaded', () => {
 
     micButton.addEventListener('click', toggleListen);
 
-    // Pre-load voices
+    // Initialize voice list
     if (synthesis.getVoices().length === 0) {
         synthesis.onvoiceschanged = populateVoiceList;
     } else {
-        populateVoiceList();
+        populateVoiceList(); // Call directly if voices are already loaded
     }
 });
 
 function populateVoiceList() {
-    // console.log("Voices loaded:", synthesis.getVoices());
-    // Can be used to select specific voices if needed
+    availableVoices = synthesis.getVoices();
+    console.log("Voices loaded/changed. Total voices:", availableVoices.length);
+    if (availableVoices.length === 0 && synthesis.getVoices().length > 0) {
+        // Sometimes onvoiceschanged fires but getVoices() inside it is empty the first time
+        // Let's try to repopulate from the source if our array is empty but the API has them
+        console.log("Retrying to populate voices as availableVoices was empty but synthesis.getVoices() has some.");
+        availableVoices = synthesis.getVoices();
+        console.log("Re-populated voices count:", availableVoices.length);
+    }
+    // You could add logic here if you need to speak something that was queued
+    // For example, if an utterance was waiting for voices to load.
 }
 
 function setupSpeechRecognition() {
@@ -70,13 +79,11 @@ function setupSpeechRecognition() {
     recognition.onresult = (event) => {
         const transcript = event.results[0][0].transcript;
         questionDisplay.textContent = `"${transcript}"`;
-        statusText.textContent = 'Thinking...';
-        loadingSpinner.style.display = 'block';
-        fetchAnswer(transcript);
+        fetchAnswer(transcript); // statusText and spinner handled in fetchAnswer
     };
 
     recognition.onerror = (event) => {
-        console.error('Speech recognition error:', event.error);
+        console.error('Speech recognition error:', event.error, event);
         statusText.textContent = `Error: ${event.error}. Try again?`;
         if (event.error === 'no-speech') {
             statusText.textContent = "Didn't hear anything. Try again!";
@@ -89,17 +96,25 @@ function setupSpeechRecognition() {
     };
 
     recognition.onend = () => {
-        if (isListening) { // If it ended naturally without a result processed
-            resetMicButton();
+        // Only reset if it wasn't due to a result being processed which calls fetchAnswer
+        if (isListening && micButton.textContent === 'LISTENING...') {
+             resetMicButton();
         }
     };
 }
 
 function toggleListen() {
     if (!recognition) return;
+
+    // Cancel any ongoing speech synthesis before starting new recognition
+    if (synthesis.speaking) {
+        console.log("Cancelling speech synthesis before new recognition starts.");
+        synthesis.cancel();
+    }
+
     if (isListening) {
         recognition.stop();
-        resetMicButton();
+        resetMicButton(); // Should ideally be handled by onend or onerror
     } else {
         try {
             recognition.start();
@@ -115,18 +130,22 @@ function resetMicButton() {
     isListening = false;
     micButton.textContent = 'TAP TO ASK';
     loadingSpinner.style.display = 'none';
+    // Optionally clear status text or set to default if not an error
+    if (!statusText.textContent.toLowerCase().includes('error')) {
+        statusText.textContent = 'Tap the mic to ask a question.';
+    }
 }
 
 async function fetchAnswer(question) {
+    loadingSpinner.style.display = 'block';
+    statusText.textContent = 'Thinking...';
+    micButton.disabled = true; // Disable button while processing
+
     const currentTone = tones[currentToneIndex].toLowerCase();
     const currentAudienceForPrompt = audiencePromptMap[audienceLevels[currentAudienceIndex]];
 
-    loadingSpinner.style.display = 'block'; // Show spinner earlier
-    statusText.textContent = 'Thinking...';
-
     try {
-        // Call your Vercel serverless function
-        const response = await fetch('/api/openai-proxy', { 
+        const response = await fetch('/api/openai-proxy', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -139,79 +158,125 @@ async function fetchAnswer(question) {
         });
 
         if (!response.ok) {
-            const errorData = await response.json(); // Try to get error message from proxy
+            const errorData = await response.json();
             console.error('API Proxy Error:', response.status, errorData);
             throw new Error(`Failed to get answer: ${errorData.error || response.statusText}`);
         }
 
         const data = await response.json();
-        let answer = data.answer; 
+        let answer = data.answer;
 
         if (!answer) {
             throw new Error("No answer received from proxy.");
         }
 
         answerDisplay.textContent = answer;
-        speakAnswer(answer);
+        speakAnswer(answer); // Call speakAnswer with the received answer
 
     } catch (error) {
         console.error('Error fetching answer via proxy:', error);
         answerDisplay.textContent = `Oops! Something went wrong. ${error.message}`;
-        speakAnswer(`Oops! Something went wrong. ${error.message.split(':')[0]}`);
+        // Optionally speak the error too, or a generic error message
+        speakAnswer(`Sorry, I encountered an error: ${error.message.split(':')[0]}.`);
     } finally {
-        resetMicButton(); // Ensure button resets and spinner hides
-        loadingSpinner.style.display = 'none';
-        statusText.textContent = 'Tap to ask another question!';
+        micButton.disabled = false; // Re-enable button
+        resetMicButton(); // Resets text, spinner
+        statusText.textContent = 'Tap to ask another question!'; // Set appropriate status
     }
 }
 
 function speakAnswer(text) {
-    if (!synthesis || !text) return;
-    // Stop any ongoing speech
-    synthesis.cancel();
+    console.log("[speakAnswer] Attempting to speak:", text);
+    if (!synthesis) {
+        console.error("[speakAnswer] SpeechSynthesis API not available.");
+        return;
+    }
+    if (!text || typeof text !== 'string' || text.trim() === "") {
+        console.warn("[speakAnswer] No valid text provided to speak.");
+        return;
+    }
+
+    // Cancel any currently speaking utterances before speaking a new one.
+    if (synthesis.speaking) {
+        console.log("[speakAnswer] Synthesis is currently speaking. Cancelling previous utterance.");
+        synthesis.cancel();
+    }
 
     const utterance = new SpeechSynthesisUtterance(text);
-    // You can try to select voices based on tone here, but it's complex
-    // and voice availability varies greatly by browser/OS.
-    // For simplicity, using default or first available English voice.
-    const voices = synthesis.getVoices();
-    let selectedVoice = voices.find(voice => voice.lang.startsWith('en') && voice.name.includes('Google') && !voice.name.includes('Male')); // Prefer a female Google voice
-    if (!selectedVoice) {
-         selectedVoice = voices.find(voice => voice.lang.startsWith('en') && voice.localService); // Try local
+    utterance.lang = 'en-US'; // Explicitly set language for the utterance
+
+    // Use the globally populated availableVoices or try to get them again
+    let voicesToUse = availableVoices.length > 0 ? availableVoices : synthesis.getVoices();
+    console.log("[speakAnswer] Voices available at speak time:", voicesToUse.length);
+
+    if (voicesToUse.length > 0) {
+        let selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en') && /Google US English/i.test(voice.name) && !/male/i.test(voice.name)); // Try specific Google Female
+        if (!selectedVoice) {
+            selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en') && /female|woman/i.test(voice.name) && voice.localService);
+        }
+        if (!selectedVoice) {
+            selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en') && voice.localService);
+        }
+        if (!selectedVoice) {
+            selectedVoice = voicesToUse.find(voice => voice.lang.startsWith('en')); // Fallback to any English voice
+        }
+
+        if (selectedVoice) {
+            utterance.voice = selectedVoice;
+            console.log("[speakAnswer] Using voice:", selectedVoice.name, `(${selectedVoice.lang})`);
+        } else {
+            console.warn("[speakAnswer] No suitable English voice found. Using browser default for lang 'en-US'.");
+        }
+    } else {
+        console.warn("[speakAnswer] No voices loaded. Relying on browser default for lang 'en-US'.");
     }
-    if (!selectedVoice) {
-         selectedVoice = voices.find(voice => voice.lang.startsWith('en')); // Any English
-    }
-    if(selectedVoice) utterance.voice = selectedVoice;
 
-    // Simple pitch/rate changes (optional, can be too much)
-    // if (tones[currentToneIndex] === 'Playful') {
-    //     utterance.pitch = 1.2; utterance.rate = 1.1;
-    // } else if (tones[currentToneIndex] === 'Sarcastic') {
-    //     utterance.pitch = 0.8; utterance.rate = 0.9;
-    // }
-
-
-    synthesis.speak(utterance);
+    utterance.onstart = () => {
+        console.log("[speakAnswer] Speech started for utterance:", utterance.text.substring(0, 30) + "...");
+    };
+    utterance.onend = () => {
+        console.log("[speakAnswer] Speech ended for utterance.");
+    };
+    utterance.onerror = (event) => {
+        console.error("[speakAnswer] SpeechSynthesisUtterance Error:", event.error, "for text:", utterance.text.substring(0,30) + "...");
+        console.error("Full event object:", event);
+        // Try to speak a generic error if TTS itself fails
+        if (event.error !== 'canceled' && event.error !== 'interrupted') { // Don't speak error if we cancelled it
+             statusText.textContent = `Speech error: ${event.error}`;
+        }
+    };
+    
+    // Small delay before speaking, sometimes helps if cancel() was just called.
+    setTimeout(() => {
+        try {
+            console.log("[speakAnswer] Calling synthesis.speak().");
+            synthesis.speak(utterance);
+        } catch (e) {
+            console.error("[speakAnswer] Error caught during synthesis.speak():", e);
+        }
+    }, 50); // 50ms delay, adjust if needed or remove
 }
 
+
 // --- SWIPE CONTROLS ---
+// (Keep your existing setupSwipeControls, handleSwipe, updateAudienceUI, updateToneUI functions here)
+// Make sure they are unchanged unless specifically mentioned. For brevity, not re-pasting them.
+// For example:
 let touchStartX = 0;
 let touchStartY = 0;
 let touchEndX = 0;
 let touchEndY = 0;
-const swipeThreshold = 50; // Minimum distance for a swipe
+const swipeThreshold = 50;
 
 function setupSwipeControls() {
     document.body.addEventListener('touchstart', (e) => {
-        // Prevent swipe if touching the button or text areas to allow scrolling in answer
-        if (e.target === micButton || answerDisplay.contains(e.target)) return;
+        if (e.target === micButton || answerDisplay.contains(e.target) || e.target.closest('.mic-button') || e.target.closest('.answer-display') ) return;
         touchStartX = e.changedTouches[0].screenX;
         touchStartY = e.changedTouches[0].screenY;
-    }, { passive: true }); // passive true if not calling preventDefault
+    }, { passive: true });
 
     document.body.addEventListener('touchend', (e) => {
-        if (e.target === micButton || answerDisplay.contains(e.target)) return;
+        if (e.target === micButton || answerDisplay.contains(e.target) || e.target.closest('.mic-button') || e.target.closest('.answer-display')) return;
         touchEndX = e.changedTouches[0].screenX;
         touchEndY = e.changedTouches[0].screenY;
         handleSwipe();
@@ -222,44 +287,36 @@ function handleSwipe() {
     const deltaX = touchEndX - touchStartX;
     const deltaY = touchEndY - touchStartY;
 
-    if (Math.abs(deltaX) > Math.abs(deltaY)) { // Horizontal swipe
+    if (Math.abs(deltaX) > Math.abs(deltaY)) {
         if (Math.abs(deltaX) > swipeThreshold) {
-            if (deltaX > 0) { // Swipe Right
+            if (deltaX > 0) {
                 currentAudienceIndex = (currentAudienceIndex + 1) % audienceLevels.length;
-            } else { // Swipe Left
+            } else {
                 currentAudienceIndex = (currentAudienceIndex - 1 + audienceLevels.length) % audienceLevels.length;
             }
             updateAudienceUI();
-            // Optional: If an answer is displayed, you could re-fetch it.
-            // For simplicity, changes apply to the next question.
-            // if (answerDisplay.textContent) fetchAnswer(questionDisplay.textContent.slice(1,-1));
         }
-    } else { // Vertical swipe
+    } else {
         if (Math.abs(deltaY) > swipeThreshold) {
-            if (deltaY < 0) { // Swipe Up
+            if (deltaY < 0) {
                 currentToneIndex = (currentToneIndex + 1) % tones.length;
-            } else { // Swipe Down
+            } else {
                 currentToneIndex = (currentToneIndex - 1 + tones.length) % tones.length;
             }
             updateToneUI();
-             // if (answerDisplay.textContent) fetchAnswer(questionDisplay.textContent.slice(1,-1));
         }
     }
-    // Reset touch coordinates
     touchStartX = 0; touchStartY = 0; touchEndX = 0; touchEndY = 0;
 }
 
-// --- UI UPDATES ---
 function updateAudienceUI() {
-    audienceSelectorUI.innerHTML = audienceLevels.map((level, index) => 
+    audienceSelectorUI.innerHTML = audienceLevels.map((level, index) =>
         `<span class="option ${index === currentAudienceIndex ? 'active' : ''}">${level.replace("For a ", "").replace("For an ", "")}</span>`
     ).join(' | ');
-    // console.log("Audience:", audienceLevels[currentAudienceIndex]);
 }
 
 function updateToneUI() {
-    toneSelectorUI.innerHTML = tones.map((tone, index) => 
+    toneSelectorUI.innerHTML = tones.map((tone, index) =>
         `<span class="option ${index === currentToneIndex ? 'active' : ''}">${tone}</span>`
     ).join(' | ');
-    // console.log("Tone:", tones[currentToneIndex]);
 }
